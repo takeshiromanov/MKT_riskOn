@@ -67,7 +67,10 @@ def load_prices(equity: str, cash: str, start) -> pd.DataFrame:
         progress=False,
     )["Close"]
     monthly = close.rename(columns={equity: "EQUITY", cash: "CASH"})
-    return monthly.resample("ME").last().dropna(how="any")
+    monthly = monthly.resample("ME").last().dropna(how="any")
+    today_utc = pd.Timestamp.now(tz="UTC").tz_localize(None).normalize()
+    last_complete_month_end = today_utc.to_period("M").start_time - pd.Timedelta(days=1)
+    return monthly.loc[monthly.index <= last_complete_month_end]
 
 
 if run_button:
