@@ -1,0 +1,33 @@
+name: Critical Layer 1 backtest
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "*.py"
+      - "requirements.txt"
+      - ".github/workflows/critical-backtest.yml"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Unit tests
+        run: python -m unittest discover -v
+      - name: Run live URTH/BIL critical backtest
+        run: python critical_backtest.py --output reports/latest
+      - name: Upload audit outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: critical-backtest-URTH-BIL
+          path: reports/latest
+          if-no-files-found: error
