@@ -82,18 +82,30 @@ class CriticalBacktestTests(unittest.TestCase):
             )
             self.assertEqual(
                 set(metrics.index),
-                {"Buy & Hold", "Binary 12m", "Graduated 3/6/12", "Continuous L1"},
+                {
+                    "Buy & Hold",
+                    "Binary 12m",
+                    "Graduated 3/6/12",
+                    "Continuous L1",
+                    "Recovery L1",
+                },
             )
             for filename in (
                 "strategy_metrics.csv",
                 "calibration.csv",
+                "calibration_recovery.csv",
                 "stress_events.csv",
                 "robustness_grid.csv",
                 "robustness_summary.csv",
+                "recovery_robustness_grid.csv",
+                "recovery_robustness_summary.csv",
+                "recovery_gates.csv",
+                "recovery_signal.csv",
                 "manifest.json",
                 "critical_backtest_summary.md",
                 "backtest_diagnostics.png",
                 "calibration.png",
+                "recovery_stress.png",
             ):
                 self.assertTrue((output / filename).is_file(), filename)
 

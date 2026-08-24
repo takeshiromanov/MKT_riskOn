@@ -36,6 +36,21 @@ segnale viene smussato in modo asimmetrico:
 
 Il segnale calcolato a fine mese T viene applicato al rendimento del mese T+1.
 
+## Overlay recovery sperimentale
+
+L'app permette di attivare un overlay opzionale per studiare un rientro piu
+rapido dopo i minimi. Il percorso risk-off del modello core non viene
+modificato. Quando il target e sotto il 50%, l'overlay apre una posizione pilota
+se sono contemporaneamente positivi il momentum relativo a 1 mese, il
+miglioramento del momentum a 3 mesi e la variazione del punteggio grezzo. Con
+la conferma del momentum relativo a 3 mesi, converge piu rapidamente verso il
+70% di esposizione. Se il segnale si deteriora, il vantaggio rispetto al core
+viene riassorbito con la velocita difensiva.
+
+I parametri sono deliberatamente predefiniti, non scelti cercando il massimo
+rendimento storico. L'overlay resta sperimentale finche non supera i gate su
+drawdown, whipsaw, rendimento nei tre mesi dopo i minimi e ritardo di rientro.
+
 ## File
 
 - `app.py`: interfaccia Streamlit
@@ -57,18 +72,20 @@ streamlit run app.py
 ## Backtest critico
 
 Il backtest non cerca il set di parametri con il rendimento piu alto. Confronta
-quattro regole sulla stessa finestra e con il medesimo capitale iniziale:
+cinque regole sulla stessa finestra e con il medesimo capitale iniziale:
 
 1. buy & hold azionario;
 2. absolute momentum binario a 12 mesi;
 3. voto graduato a 3/6/12 mesi;
 4. Layer 1 continuo.
+5. Layer 1 continuo con overlay recovery sperimentale.
 
 Il segnale di fine mese T viene sempre applicato a T+1. Il turnover comprende
 anche il ribilanciamento dovuto alla deriva dei pesi. Gli output misurano
 drawdown e relativa durata, ritardo negli episodi di stress, whipsaw, turnover,
-calibrazione dei bucket di esposizione e una griglia di 81 configurazioni
-vicine. La griglia serve a scoprire fragilita, non a selezionare l'ottimo.
+calibrazione dei bucket di esposizione, una griglia di 81 configurazioni
+vicine per il core e 12 varianti predefinite dell'overlay recovery. Le griglie
+servono a scoprire fragilita, non a selezionare l'ottimo.
 Il mese di calendario ancora in corso viene escluso automaticamente.
 
 ```bash
@@ -76,7 +93,7 @@ python critical_backtest.py --output reports/latest
 python -m unittest discover -v
 ```
 
-Vengono generati CSV di audit, due grafici, un manifest con fonte e parametri e
+Vengono generati CSV di audit, tre grafici, un manifest con fonte e parametri e
 una sintesi Markdown. La cartella `reports/` non viene versionata.
 
 ### Storico esteso

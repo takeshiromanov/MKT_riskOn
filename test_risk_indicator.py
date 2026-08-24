@@ -3,7 +3,11 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from risk_indicator import backtest_allocation, continuous_absolute_momentum
+from risk_indicator import (
+    backtest_allocation,
+    continuous_absolute_momentum,
+    continuous_absolute_momentum_recovery,
+)
 
 
 def _prices(equity_monthly_return: float, cash_monthly_return: float) -> pd.DataFrame:
@@ -12,6 +16,24 @@ def _prices(equity_monthly_return: float, cash_monthly_return: float) -> pd.Data
         {
             "EQUITY": 100 * np.cumprod(np.full(len(index), 1 + equity_monthly_return)),
             "CASH": 100 * np.cumprod(np.full(len(index), 1 + cash_monthly_return)),
+        },
+        index=index,
+    )
+
+
+def _v_reversal_prices() -> pd.DataFrame:
+    index = pd.date_range("2010-01-31", periods=100, freq="ME")
+    equity_returns = np.r_[
+        np.full(50, 0.012),
+        np.full(8, -0.08),
+        np.full(12, 0.07),
+        np.full(30, 0.012),
+    ]
+    cash_returns = np.full(len(index), 0.0015)
+    return pd.DataFrame(
+        {
+            "EQUITY": 100 * np.cumprod(1 + equity_returns),
+            "CASH": 100 * np.cumprod(1 + cash_returns),
         },
         index=index,
     )
@@ -79,6 +101,48 @@ class RiskIndicatorTests(unittest.TestCase):
         )
         self.assertAlmostEqual(result.loc[index[1], "turnover"], 0.5)
         self.assertGreater(result.loc[index[2], "turnover"], 0.0)
+
+    def test_recovery_overlay_preserves_the_down_path(self):
+        prices = _v_reversal_prices()
+        baseline = continuous_absolute_momentum(
+            prices, "EQUITY", "CASH"
+        )["target_weight"]
+        recovery = continuous_absolute_momentum_recovery(
+            prices, "EQUITY", "CASH"
+        )["target_weight"]
+        pd.testing.assert_series_equal(
+            baseline.iloc[50:58], recovery.iloc[50:58], check_names=False
+        )
+
+    def test_recovery_overlay_accelerates_the_rebound(self):
+        prices = _v_reversal_prices()
+        baseline = continuous_absolute_momentum(
+            prices, "EQUITY", "CASH"
+        )["target_weight"]
+        recovery = continuous_absolute_momentum_recovery(
+            prices, "EQUITY", "CASH"
+        )
+        rebound = prices.index[58:64]
+        self.assertGreater(
+            recovery.loc[rebound, "target_weight"].mean(),
+            baseline.loc[rebound].mean(),
+        )
+        self.assertTrue(recovery.loc[rebound, "recovery_mode"].any())
+
+    def test_recovery_signal_has_no_future_data_dependency(self):
+        prices = _v_reversal_prices()
+        cutoff = prices.index[70]
+        altered = prices.copy()
+        altered.loc[altered.index > cutoff, "EQUITY"] *= 3
+        first = continuous_absolute_momentum_recovery(
+            prices, "EQUITY", "CASH"
+        )["target_weight"]
+        second = continuous_absolute_momentum_recovery(
+            altered, "EQUITY", "CASH"
+        )["target_weight"]
+        pd.testing.assert_series_equal(
+            first.loc[:cutoff], second.loc[:cutoff], check_names=False
+        )
 
 
 if __name__ == "__main__":

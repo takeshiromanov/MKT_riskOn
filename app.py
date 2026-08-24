@@ -10,6 +10,7 @@ from risk_indicator import (
     backtest_allocation,
     binary_signal,
     continuous_absolute_momentum,
+    continuous_absolute_momentum_recovery,
 )
 
 
@@ -55,6 +56,20 @@ with st.sidebar.expander("Smussamento e costi"):
     )
     transaction_cost_bps = st.slider("Costo sul turnover (bps)", 0, 50, 10)
 
+with st.sidebar.expander("Rientro rapido sperimentale"):
+    use_recovery = st.toggle(
+        "Attiva overlay recovery",
+        value=False,
+        help=(
+            "Accelera solo il rientro dopo una fase risk-off. Il modello core "
+            "e il percorso di riduzione del rischio restano invariati."
+        ),
+    )
+    st.caption(
+        "Apre una posizione pilota quando momentum 1m, miglioramento 3m e "
+        "punteggio grezzo concordano; accelera fino al 70% dopo la conferma 3m."
+    )
+
 run_button = st.sidebar.button("Calcola", type="primary")
 
 
@@ -85,7 +100,7 @@ if run_button:
 
     try:
         prices = load_prices(equity_ticker, cash_ticker, start_date)
-        signal = continuous_absolute_momentum(
+        core_signal = continuous_absolute_momentum(
             prices,
             "EQUITY",
             "CASH",
@@ -97,6 +112,21 @@ if run_button:
             alpha_down=alpha_down,
             round_to=round_step_pct / 100,
         )
+        if use_recovery:
+            signal = continuous_absolute_momentum_recovery(
+                prices,
+                "EQUITY",
+                "CASH",
+                lookback_periods=periods,
+                lookback_weights=weights,
+                volatility_window_months=int(volatility_window),
+                transition_width=transition_width,
+                alpha_up=alpha_up,
+                alpha_down=alpha_down,
+                round_to=round_step_pct / 100,
+            )
+        else:
+            signal = core_signal
     except Exception as exc:
         st.error(f"Calcolo non riuscito: {exc}")
         st.stop()
@@ -113,8 +143,22 @@ if run_button:
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Azionario target", f"{target:.0%}")
     col2.metric("Liquidita target", f"{1 - target:.0%}")
-    col3.metric("Segnale prima dello smussamento", f"{latest['raw_score']:.1%}")
+    if use_recovery:
+        core_latest = core_signal.loc[latest_date, "target_weight"]
+        col3.metric(
+            "Target core lento",
+            f"{core_latest:.0%}",
+            delta=f"{target - core_latest:+.0%} recovery",
+        )
+    else:
+        col3.metric("Segnale prima dello smussamento", f"{latest['raw_score']:.1%}")
     col4.metric("Ultimo dato", latest_date.strftime("%d %b %Y"))
+
+    if use_recovery:
+        st.warning(
+            "Overlay recovery sperimentale: usarlo come ipotesi da validare, non "
+            "come sostituzione automatica del Layer 1 core."
+        )
 
     st.info(
         "Il target e un limite operativo: se i layer successivi non trovano "
@@ -170,9 +214,10 @@ if run_button:
         pd.Series(1.0, index=prices.index),
         transaction_cost_bps=transaction_cost_bps,
     )
+    layer_label = "Recovery L1" if use_recovery else "Layer 1 continuo"
     common_returns = pd.concat(
         {
-            "Layer 1 continuo": continuous_bt["net_return"],
+            layer_label: continuous_bt["net_return"],
             "Binario 12 mesi": binary_bt["net_return"],
             "Buy & Hold": buy_hold_bt["net_return"],
         },
@@ -196,8 +241,8 @@ if run_button:
         alpha=0.65,
     )
     equity_ax.plot(
-        common_equity["Layer 1 continuo"],
-        label="Layer 1 continuo",
+        common_equity[layer_label],
+        label=layer_label,
         color="steelblue",
     )
     equity_ax.plot(
@@ -212,12 +257,21 @@ if run_button:
 
     signal_ax.plot(signal["raw_score"], label="Segnale grezzo", color="lightgray")
     signal_ax.step(
-        signal["target_weight"].index,
-        signal["target_weight"],
+        core_signal["target_weight"].index,
+        core_signal["target_weight"],
         where="mid",
-        label="Esposizione target",
-        color="steelblue",
+        label="Target core",
+        color="gray" if use_recovery else "steelblue",
+        alpha=0.75,
     )
+    if use_recovery:
+        signal_ax.step(
+            signal["target_weight"].index,
+            signal["target_weight"],
+            where="mid",
+            label="Target con recovery",
+            color="steelblue",
+        )
     signal_ax.set_ylim(0, 1)
     signal_ax.set_ylabel("Azionario")
     signal_ax.legend()
@@ -245,7 +299,19 @@ if run_button:
     )
 
     with st.expander("Ultimi 24 segnali"):
-        history = signal[["raw_score", "smoothed_score", "target_weight", "cash_weight"]].tail(24)
+        history_columns = ["raw_score", "smoothed_score"]
+        if use_recovery:
+            history_columns.extend(
+                [
+                    "baseline_target_weight",
+                    "fast_excess_1m",
+                    "fast_excess_3m",
+                    "probe_active",
+                    "recovery_confirmed",
+                ]
+            )
+        history_columns.extend(["target_weight", "cash_weight"])
+        history = signal[history_columns].tail(24)
         st.dataframe(history.style.format("{:.1%}"), width="stretch")
 
     st.caption(
