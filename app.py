@@ -17,15 +17,16 @@ from risk_indicator import (
 st.set_page_config(page_title="Layer 1 - Global Risk", layout="wide")
 st.title("Layer 1 - Esposizione azionaria globale")
 st.caption(
-    "Absolute momentum continuo in USD. URTH misura l'azionario sviluppato globale; "
+    "Absolute momentum continuo in USD. ACWI misura l'azionario globale, inclusi "
+    "mercati sviluppati ed emergenti; "
     "BIL rappresenta il rendimento dei Treasury Bill USA a 1-3 mesi. Il risultato "
     "indica quanta esposizione azionaria mantenere, non quali titoli acquistare."
 )
 
 st.sidebar.header("Mercato")
-equity_ticker = st.sidebar.text_input("Benchmark azionario", value="URTH")
+equity_ticker = st.sidebar.text_input("Benchmark azionario", value="ACWI")
 cash_ticker = st.sidebar.text_input("Hurdle cash USD", value="BIL")
-start_date = st.sidebar.date_input("Inizio storico", value=pd.Timestamp("2012-01-01"))
+start_date = st.sidebar.date_input("Inizio storico", value=pd.Timestamp("2008-01-01"))
 
 st.sidebar.header("Absolute momentum")
 short_lb = st.sidebar.number_input("Orizzonte breve (mesi)", 1, 24, 3)
@@ -236,7 +237,7 @@ if run_button:
     )
     equity_ax.plot(
         common_equity["Buy & Hold"],
-        label="URTH Buy & Hold",
+        label=f"{equity_ticker} Buy & Hold",
         color="gray",
         alpha=0.65,
     )
