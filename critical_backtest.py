@@ -87,6 +87,9 @@ def load_prices(
 
     prices = prices[["EQUITY", "CASH"]].apply(pd.to_numeric, errors="coerce")
     prices = prices.resample("ME").last().dropna(how="any")
+    today_utc = pd.Timestamp.now(tz="UTC").tz_localize(None).normalize()
+    last_complete_month_end = today_utc.to_period("M").start_time - pd.Timedelta(days=1)
+    prices = prices.loc[prices.index <= last_complete_month_end]
     if prices.index.has_duplicates:
         raise ValueError("Lo storico contiene date mensili duplicate")
     if not prices.index.is_monotonic_increasing:
