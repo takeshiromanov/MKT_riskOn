@@ -160,8 +160,23 @@ if run_button:
         binary,
         transaction_cost_bps=transaction_cost_bps,
     )
-    buy_hold_returns = prices["EQUITY"].pct_change(fill_method=None)
-    buy_hold_equity = (1 + buy_hold_returns.fillna(0)).cumprod()
+    buy_hold_bt = backtest_allocation(
+        prices,
+        "EQUITY",
+        "CASH",
+        pd.Series(1.0, index=prices.index),
+        transaction_cost_bps=transaction_cost_bps,
+    )
+    common_returns = pd.concat(
+        {
+            "Layer 1 continuo": continuous_bt["net_return"],
+            "Binario 12 mesi": binary_bt["net_return"],
+            "Buy & Hold": buy_hold_bt["net_return"],
+        },
+        axis=1,
+    ).dropna(how="any")
+    common_index = common_returns.index
+    common_equity = (1 + common_returns).cumprod()
 
     st.subheader("Storico")
     figure, (equity_ax, signal_ax) = plt.subplots(
@@ -171,9 +186,23 @@ if run_button:
         sharex=True,
         gridspec_kw={"height_ratios": [3, 1]},
     )
-    equity_ax.plot(buy_hold_equity, label="URTH Buy & Hold", color="gray", alpha=0.65)
-    equity_ax.plot(continuous_bt["equity"], label="Layer 1 continuo", color="steelblue")
-    equity_ax.plot(binary_bt["equity"], label="Absolute momentum binario 12m", color="darkred", alpha=0.65)
+    equity_ax.plot(
+        common_equity["Buy & Hold"],
+        label="URTH Buy & Hold",
+        color="gray",
+        alpha=0.65,
+    )
+    equity_ax.plot(
+        common_equity["Layer 1 continuo"],
+        label="Layer 1 continuo",
+        color="steelblue",
+    )
+    equity_ax.plot(
+        common_equity["Binario 12 mesi"],
+        label="Absolute momentum binario 12m",
+        color="darkred",
+        alpha=0.65,
+    )
     equity_ax.set_yscale("log")
     equity_ax.set_ylabel("Crescita di 1")
     equity_ax.legend()
@@ -194,9 +223,8 @@ if run_button:
 
     stats = pd.DataFrame(
         {
-            "Layer 1 continuo": performance_stats(continuous_bt["net_return"]),
-            "Binario 12 mesi": performance_stats(binary_bt["net_return"]),
-            "Buy & Hold": performance_stats(buy_hold_returns),
+            name: performance_stats(common_returns[name])
+            for name in common_returns.columns
         }
     ).T
     st.subheader("Statistiche di confronto")
@@ -220,7 +248,8 @@ if run_button:
     st.caption(
         "Segnale e backtest calcolati in USD su prezzi adjusted. Il segnale di fine mese T "
         "viene applicato ai rendimenti del mese T+1. Le performance reali del portafoglio "
-        "saranno misurate in EUR nei layer finali."
+        "saranno misurate in EUR nei layer finali. I confronti usano la stessa finestra "
+        "storica e includono i costi sul turnover."
     )
 else:
     st.info("Configura il modello nella barra laterale e premi Calcola.")
