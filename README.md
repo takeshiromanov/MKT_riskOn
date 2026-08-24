@@ -38,7 +38,9 @@ Il segnale calcolato a fine mese T viene applicato al rendimento del mese T+1.
 
 - `app.py`: interfaccia Streamlit
 - `risk_indicator.py`: motore del Layer 1
+- `critical_backtest.py`: test di falsificazione e robustezza del Layer 1
 - `dual_momentum.py`: funzioni condivise e base per il futuro Layer 2
+- `test_*.py`: test automatici, inclusi lag del segnale e turnover
 - `requirements.txt`: dipendenze
 
 ## Avvio
@@ -49,6 +51,46 @@ source .venv/bin/activate
 pip install -r requirements.txt
 streamlit run app.py
 ```
+
+## Backtest critico
+
+Il backtest non cerca il set di parametri con il rendimento piu alto. Confronta
+quattro regole sulla stessa finestra e con il medesimo capitale iniziale:
+
+1. buy & hold azionario;
+2. absolute momentum binario a 12 mesi;
+3. voto graduato a 3/6/12 mesi;
+4. Layer 1 continuo.
+
+Il segnale di fine mese T viene sempre applicato a T+1. Il turnover comprende
+anche il ribilanciamento dovuto alla deriva dei pesi. Gli output misurano
+drawdown e relativa durata, ritardo negli episodi di stress, whipsaw, turnover,
+calibrazione dei bucket di esposizione e una griglia di 81 configurazioni
+vicine. La griglia serve a scoprire fragilita, non a selezionare l'ottimo.
+
+```bash
+python critical_backtest.py --output reports/latest
+python -m unittest discover -v
+```
+
+Vengono generati CSV di audit, due grafici, un manifest con fonte e parametri e
+una sintesi Markdown. La cartella `reports/` non viene versionata.
+
+### Storico esteso
+
+La storia comune di URTH/BIL parte solo nel 2012 circa: e insufficiente per
+validare definitivamente un filtro di regime perche esclude dot-com e 2008.
+Per ripetere esattamente lo stesso test con serie storiche piu lunghe:
+
+```bash
+python critical_backtest.py \
+  --prices-csv data/msci_world_tbill_monthly.csv \
+  --output reports/extended
+```
+
+Il CSV deve avere tre colonne: `DATE`, `EQUITY` e `CASH`; le ultime due devono
+essere indici total-return o prezzi adjusted, entrambi in USD e a frequenza
+mensile (o ricampionabile a fine mese).
 
 ## Avvertenza
 
