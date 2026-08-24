@@ -45,7 +45,7 @@ class CriticalBacktestTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             csv_path = Path(temporary) / "prices.csv"
             frame.to_csv(csv_path, index=False)
-            prices, _ = load_prices("URTH", "BIL", "2012-01-01", csv_path)
+            prices, _ = load_prices("ACWI", "BIL", "2008-01-01", csv_path)
         self.assertLess(prices.index[-1], today_utc.to_period("M").start_time)
 
     def test_drawdown_episode_dates(self):
