@@ -23,11 +23,11 @@ jobs:
         run: pip install -r requirements.txt
       - name: Unit tests
         run: python -m unittest discover -v
-      - name: Run live URTH/BIL critical backtest
+      - name: Run live ACWI/BIL critical backtest
         run: python critical_backtest.py --output reports/latest
       - name: Upload audit outputs
         uses: actions/upload-artifact@v4
         with:
-          name: critical-backtest-URTH-BIL
+          name: critical-backtest-ACWI-BIL
           path: reports/latest
           if-no-files-found: error
