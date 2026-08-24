@@ -12,7 +12,7 @@ titoli e non costruisce il portafoglio. Il target e anche un tetto: se i layer
 successivi trovano pochi acquisti validi, l'esposizione effettiva puo restare
 inferiore.
 
-- Benchmark azionario predefinito: `URTH` (MSCI World, USD)
+- Benchmark azionario predefinito: `ACWI` (MSCI ACWI, mercati sviluppati ed emergenti, USD)
 - Hurdle predefinito: `BIL` (Treasury Bill USA 1-3 mesi, USD)
 - Orizzonti predefiniti: 3, 6 e 12 mesi
 - Pesi predefiniti: 20%, 30% e 50%
@@ -23,8 +23,8 @@ portafoglio saranno misurate in EUR nei layer finali.
 
 ## Segnale continuo
 
-Per ciascun orizzonte viene calcolato il rendimento composto di URTH rispetto
-a BIL. Il margine viene rapportato alla volatilita recente di URTH e convertito
+Per ciascun orizzonte viene calcolato il rendimento composto di ACWI rispetto
+a BIL. Il margine viene rapportato alla volatilita recente di ACWI e convertito
 con una funzione `tanh` in un punteggio compreso tra 0% e 100%.
 
 I punteggi dei tre orizzonti vengono mediati con i pesi configurati. Infine il
@@ -104,13 +104,15 @@ una sintesi Markdown. La cartella `reports/` non viene versionata.
 
 ### Storico esteso
 
-La storia comune di URTH/BIL parte solo nel 2012 circa: e insufficiente per
-validare definitivamente un filtro di regime perche esclude dot-com e 2008.
+La storia comune di ACWI/BIL parte nel 2008. E comunque insufficiente per
+validare definitivamente un filtro di regime: esclude dot-com e, dopo il
+warm-up minimo di 12 mesi, non permette di valutare l'uscita prima della crisi
+finanziaria del 2008.
 Per ripetere esattamente lo stesso test con serie storiche piu lunghe:
 
 ```bash
 python critical_backtest.py \
-  --prices-csv data/msci_world_tbill_monthly.csv \
+  --prices-csv data/msci_acwi_tbill_monthly.csv \
   --output reports/extended
 ```
 
