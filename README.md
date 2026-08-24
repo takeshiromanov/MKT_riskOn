@@ -69,6 +69,7 @@ anche il ribilanciamento dovuto alla deriva dei pesi. Gli output misurano
 drawdown e relativa durata, ritardo negli episodi di stress, whipsaw, turnover,
 calibrazione dei bucket di esposizione e una griglia di 81 configurazioni
 vicine. La griglia serve a scoprire fragilita, non a selezionare l'ottimo.
+Il mese di calendario ancora in corso viene escluso automaticamente.
 
 ```bash
 python critical_backtest.py --output reports/latest
