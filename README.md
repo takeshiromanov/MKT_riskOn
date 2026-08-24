@@ -38,14 +38,19 @@ Il segnale calcolato a fine mese T viene applicato al rendimento del mese T+1.
 
 ## Overlay recovery sperimentale
 
-L'app permette di attivare un overlay opzionale per studiare un rientro piu
-rapido dopo i minimi. Il percorso risk-off del modello core non viene
-modificato. Quando il target e sotto il 50%, l'overlay apre una posizione pilota
-se sono contemporaneamente positivi il momentum relativo a 1 mese, il
-miglioramento del momentum a 3 mesi e la variazione del punteggio grezzo. Con
-la conferma del momentum relativo a 3 mesi, converge piu rapidamente verso il
-70% di esposizione. Se il segnale si deteriora, il vantaggio rispetto al core
-viene riassorbito con la velocita difensiva.
+L'app permette di attivare la variante one-shot per studiare un rientro piu
+rapido dopo i minimi. Il percorso risk-off del modello core prima del trigger
+non viene modificato. Quando il target e sotto il 50%, l'overlay apre una
+posizione pilota se sono contemporaneamente positivi il momentum relativo a 1
+mese, il miglioramento del momentum a 3 mesi e la variazione del punteggio
+grezzo. Con la conferma del momentum relativo a 3 mesi converge piu rapidamente
+verso il 70% di esposizione.
+
+La posizione pilota puo scattare una sola volta nello stesso episodio risk-off
+e resta attiva almeno due mesi, salvo un deterioramento forte. L'overlay si
+riarma soltanto dopo due mesi del core sopra il 70%. Il backtest conserva anche
+la prima recovery ripetibile come benchmark: non e esposta nell'app perche
+produceva troppi whipsaw.
 
 I parametri sono deliberatamente predefiniti, non scelti cercando il massimo
 rendimento storico. L'overlay resta sperimentale finche non supera i gate su
@@ -72,13 +77,14 @@ streamlit run app.py
 ## Backtest critico
 
 Il backtest non cerca il set di parametri con il rendimento piu alto. Confronta
-cinque regole sulla stessa finestra e con il medesimo capitale iniziale:
+sei regole sulla stessa finestra e con il medesimo capitale iniziale:
 
 1. buy & hold azionario;
 2. absolute momentum binario a 12 mesi;
 3. voto graduato a 3/6/12 mesi;
-4. Layer 1 continuo.
-5. Layer 1 continuo con overlay recovery sperimentale.
+4. Layer 1 continuo;
+5. prima recovery ripetibile;
+6. recovery one-shot anti-whipsaw.
 
 Il segnale di fine mese T viene sempre applicato a T+1. Il turnover comprende
 anche il ribilanciamento dovuto alla deriva dei pesi. Gli output misurano

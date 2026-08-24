@@ -10,7 +10,7 @@ from risk_indicator import (
     backtest_allocation,
     binary_signal,
     continuous_absolute_momentum,
-    continuous_absolute_momentum_recovery,
+    continuous_absolute_momentum_recovery_one_shot,
 )
 
 
@@ -58,7 +58,7 @@ with st.sidebar.expander("Smussamento e costi"):
 
 with st.sidebar.expander("Rientro rapido sperimentale"):
     use_recovery = st.toggle(
-        "Attiva overlay recovery",
+        "Attiva recovery one-shot",
         value=False,
         help=(
             "Accelera solo il rientro dopo una fase risk-off. Il modello core "
@@ -66,8 +66,8 @@ with st.sidebar.expander("Rientro rapido sperimentale"):
         ),
     )
     st.caption(
-        "Apre una posizione pilota quando momentum 1m, miglioramento 3m e "
-        "punteggio grezzo concordano; accelera fino al 70% dopo la conferma 3m."
+        "Una sola posizione pilota per episodio risk-off; riarmo dopo due mesi "
+        "del core sopra il 70%. Accelera dopo la conferma del momentum 3m."
     )
 
 run_button = st.sidebar.button("Calcola", type="primary")
@@ -113,7 +113,7 @@ if run_button:
             round_to=round_step_pct / 100,
         )
         if use_recovery:
-            signal = continuous_absolute_momentum_recovery(
+            signal = continuous_absolute_momentum_recovery_one_shot(
                 prices,
                 "EQUITY",
                 "CASH",
@@ -156,7 +156,7 @@ if run_button:
 
     if use_recovery:
         st.warning(
-            "Overlay recovery sperimentale: usarlo come ipotesi da validare, non "
+            "Recovery one-shot sperimentale: usarla come ipotesi da validare, non "
             "come sostituzione automatica del Layer 1 core."
         )
 
@@ -214,7 +214,7 @@ if run_button:
         pd.Series(1.0, index=prices.index),
         transaction_cost_bps=transaction_cost_bps,
     )
-    layer_label = "Recovery L1" if use_recovery else "Layer 1 continuo"
+    layer_label = "Recovery one-shot" if use_recovery else "Layer 1 continuo"
     common_returns = pd.concat(
         {
             layer_label: continuous_bt["net_return"],
@@ -306,13 +306,30 @@ if run_button:
                     "baseline_target_weight",
                     "fast_excess_1m",
                     "fast_excess_3m",
+                    "one_shot_armed",
+                    "episode_used",
                     "probe_active",
                     "recovery_confirmed",
+                    "abort_active",
+                    "recovery_phase",
                 ]
             )
         history_columns.extend(["target_weight", "cash_weight"])
         history = signal[history_columns].tail(24)
-        st.dataframe(history.style.format("{:.1%}"), width="stretch")
+        percentage_columns = {
+            column: "{:.1%}"
+            for column in history.columns
+            if column
+            not in {
+                "one_shot_armed",
+                "episode_used",
+                "probe_active",
+                "recovery_confirmed",
+                "abort_active",
+                "recovery_phase",
+            }
+        }
+        st.dataframe(history.style.format(percentage_columns), width="stretch")
 
     st.caption(
         "Segnale e backtest calcolati in USD su prezzi adjusted. Il segnale di fine mese T "

@@ -87,7 +87,8 @@ class CriticalBacktestTests(unittest.TestCase):
                     "Binary 12m",
                     "Graduated 3/6/12",
                     "Continuous L1",
-                    "Recovery L1",
+                    "Recovery v1",
+                    "Recovery one-shot",
                 },
             )
             for filename in (

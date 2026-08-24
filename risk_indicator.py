@@ -17,6 +17,7 @@ from dual_momentum import compute_momentum
 
 MODEL_VERSION = "L1-continuous-v1"
 RECOVERY_MODEL_VERSION = "L1-recovery-v1-experimental"
+ONE_SHOT_RECOVERY_MODEL_VERSION = "L1-recovery-one-shot-v2-experimental"
 
 
 def binary_signal(
@@ -325,6 +326,238 @@ def continuous_absolute_momentum_recovery(
         result["target_weight"] = rounded.clip(0, 1)
     else:
         result["target_weight"] = recovery_target
+    result["cash_weight"] = 1 - result["target_weight"]
+    return result
+
+
+def continuous_absolute_momentum_recovery_one_shot(
+    prices: pd.DataFrame,
+    equity_asset: str,
+    cash_asset: str,
+    lookback_periods: tuple[int, ...] = (3, 6, 12),
+    lookback_weights: tuple[float, ...] = (0.20, 0.30, 0.50),
+    volatility_window_months: int = 12,
+    transition_width: float = 0.75,
+    alpha_up: float = 0.30,
+    alpha_down: float = 0.60,
+    round_to: float = 0.05,
+    probe_size: float = 0.20,
+    recovery_alpha_up: float = 0.60,
+    recovery_step_cap: float = 0.20,
+    recovery_activation_ceiling: float = 0.50,
+    recovery_target_ceiling: float = 0.70,
+    minimum_hold_months: int = 2,
+    reset_confirm_months: int = 2,
+    abort_excess_1m: float = -0.05,
+    abort_raw_score_change: float = -0.15,
+) -> pd.DataFrame:
+    """Overlay di rientro utilizzabile una sola volta per episodio risk-off.
+
+    L'episodio si apre quando il target core e sotto il 50%. Dopo il primo
+    trigger l'overlay non puo riarmarsi finche il core non resta almeno due
+    mesi sopra il 70%. La posizione pilota viene mantenuta per almeno due mesi,
+    salvo un deterioramento forte a un mese o del punteggio grezzo.
+
+    Prima del trigger il percorso coincide esattamente con il modello core.
+    Tutte le condizioni sono osservabili alla data T e il target resta da
+    applicare soltanto a T+1.
+    """
+    recovery_parameters = {
+        "probe_size": probe_size,
+        "recovery_alpha_up": recovery_alpha_up,
+        "recovery_step_cap": recovery_step_cap,
+        "recovery_activation_ceiling": recovery_activation_ceiling,
+        "recovery_target_ceiling": recovery_target_ceiling,
+        "abort_excess_1m": abort_excess_1m,
+        "abort_raw_score_change": abort_raw_score_change,
+    }
+    if any(not np.isfinite(value) for value in recovery_parameters.values()):
+        raise ValueError("i parametri one-shot devono essere finiti")
+    if not 0 <= probe_size <= 1 or not 0 < recovery_step_cap <= 1:
+        raise ValueError("probe_size e recovery_step_cap devono essere tra 0 e 1")
+    if not 0 < recovery_alpha_up <= 1:
+        raise ValueError("recovery_alpha_up deve essere compreso tra 0 e 1")
+    if not 0 < recovery_activation_ceiling < recovery_target_ceiling <= 1:
+        raise ValueError(
+            "le soglie recovery devono essere crescenti e comprese tra 0 e 1"
+        )
+    if minimum_hold_months < 0 or reset_confirm_months < 1:
+        raise ValueError("hold deve essere non negativo e reset almeno pari a uno")
+    if abort_excess_1m >= 0 or abort_raw_score_change >= 0:
+        raise ValueError("le soglie di abort devono essere negative")
+
+    result = continuous_absolute_momentum(
+        prices,
+        equity_asset,
+        cash_asset,
+        lookback_periods=lookback_periods,
+        lookback_weights=lookback_weights,
+        volatility_window_months=volatility_window_months,
+        transition_width=transition_width,
+        alpha_up=alpha_up,
+        alpha_down=alpha_down,
+        round_to=0,
+    )
+    result["baseline_target_weight"] = result["target_weight"]
+
+    equity_growth_1m = prices[equity_asset] / prices[equity_asset].shift(1)
+    cash_growth_1m = prices[cash_asset] / prices[cash_asset].shift(1)
+    result["fast_excess_1m"] = equity_growth_1m / cash_growth_1m - 1
+    equity_growth_3m = prices[equity_asset] / prices[equity_asset].shift(3)
+    cash_growth_3m = prices[cash_asset] / prices[cash_asset].shift(3)
+    result["fast_excess_3m"] = equity_growth_3m / cash_growth_3m - 1
+    result["fast_excess_3m_change"] = result["fast_excess_3m"].diff()
+    result["raw_score_change"] = result["raw_score"].diff()
+
+    one_shot_target = pd.Series(np.nan, index=prices.index, dtype=float)
+    armed_series = pd.Series(False, index=prices.index, dtype=bool)
+    episode_used_series = pd.Series(False, index=prices.index, dtype=bool)
+    probe_active = pd.Series(False, index=prices.index, dtype=bool)
+    recovery_confirmed = pd.Series(False, index=prices.index, dtype=bool)
+    abort_active = pd.Series(False, index=prices.index, dtype=bool)
+    hold_remaining_series = pd.Series(0, index=prices.index, dtype=int)
+    phase_series = pd.Series("inactive", index=prices.index, dtype=object)
+
+    previous_target = np.nan
+    active = False
+    episode_used = False
+    hold_remaining = 0
+    reset_streak = 0
+    for date, row in result.iterrows():
+        base_target = row["baseline_target_weight"]
+        if pd.isna(base_target):
+            continue
+
+        if pd.isna(previous_target):
+            current = float(base_target)
+            episode_used = False
+            one_shot_target.loc[date] = current
+            armed_series.loc[date] = current < recovery_activation_ceiling
+            previous_target = current
+            continue
+
+        if base_target >= recovery_target_ceiling:
+            reset_streak += 1
+        else:
+            reset_streak = 0
+        if reset_streak >= reset_confirm_months:
+            episode_used = False
+
+        armed = (
+            not episode_used
+            and not active
+            and base_target < recovery_activation_ceiling
+        )
+        fast_positive = pd.notna(row["fast_excess_1m"]) and row["fast_excess_1m"] > 0
+        three_month_improving = (
+            pd.notna(row["fast_excess_3m_change"])
+            and row["fast_excess_3m_change"] > 0
+        )
+        raw_rising = pd.notna(row["raw_score_change"]) and row["raw_score_change"] > 0
+        pilot_trigger = armed and fast_positive and three_month_improving and raw_rising
+
+        if pilot_trigger:
+            active = True
+            episode_used = True
+            hold_remaining = minimum_hold_months
+
+        strong_abort = active and (
+            (
+                pd.notna(row["fast_excess_1m"])
+                and row["fast_excess_1m"] <= abort_excess_1m
+            )
+            or (
+                pd.notna(row["raw_score_change"])
+                and row["raw_score_change"] <= abort_raw_score_change
+            )
+        )
+        if strong_abort:
+            active = False
+            hold_remaining = 0
+
+        confirmed = (
+            active
+            and pd.notna(row["fast_excess_3m"])
+            and row["fast_excess_3m"] > 0
+            and fast_positive
+        )
+
+        if strong_abort:
+            current = previous_target + alpha_down * (
+                float(base_target) - previous_target
+            )
+            current = max(current, float(base_target))
+            phase = "abort"
+        elif pilot_trigger and not confirmed:
+            desired = max(
+                float(base_target),
+                min(previous_target + probe_size, recovery_activation_ceiling),
+            )
+            current = min(desired, previous_target + recovery_step_cap)
+            phase = "probe"
+        elif confirmed:
+            desired = max(float(base_target), recovery_target_ceiling)
+            candidate = previous_target + recovery_alpha_up * (
+                desired - previous_target
+            )
+            current = min(candidate, previous_target + recovery_step_cap)
+            current = max(current, float(base_target))
+            phase = "confirmed"
+        elif active and hold_remaining > 0:
+            current = max(float(base_target), previous_target)
+            phase = "hold"
+        elif active and (fast_positive or three_month_improving):
+            current = max(float(base_target), previous_target)
+            phase = "hold"
+        elif active:
+            active = False
+            current = previous_target + alpha_down * (
+                float(base_target) - previous_target
+            )
+            current = max(current, float(base_target))
+            phase = "decay"
+        elif episode_used and previous_target > base_target:
+            current = previous_target + alpha_down * (
+                float(base_target) - previous_target
+            )
+            current = max(current, float(base_target))
+            phase = "decay"
+        else:
+            current = float(base_target)
+            phase = "inactive"
+
+        if active and not pilot_trigger and hold_remaining > 0:
+            hold_remaining -= 1
+        current = float(np.clip(current, 0, 1))
+        if base_target >= recovery_target_ceiling:
+            active = False
+            current = max(current, float(base_target))
+            if phase not in {"abort", "decay"}:
+                phase = "core_reset"
+
+        one_shot_target.loc[date] = current
+        armed_series.loc[date] = armed
+        episode_used_series.loc[date] = episode_used
+        probe_active.loc[date] = pilot_trigger
+        recovery_confirmed.loc[date] = confirmed
+        abort_active.loc[date] = strong_abort
+        hold_remaining_series.loc[date] = hold_remaining
+        phase_series.loc[date] = phase
+        previous_target = current
+
+    result["one_shot_score"] = one_shot_target
+    result["one_shot_armed"] = armed_series
+    result["episode_used"] = episode_used_series
+    result["probe_active"] = probe_active
+    result["recovery_confirmed"] = recovery_confirmed
+    result["abort_active"] = abort_active
+    result["hold_remaining"] = hold_remaining_series
+    result["recovery_phase"] = phase_series
+    if round_to > 0:
+        rounded = np.floor(one_shot_target / round_to + 0.5) * round_to
+        result["target_weight"] = rounded.clip(0, 1)
+    else:
+        result["target_weight"] = one_shot_target
     result["cash_weight"] = 1 - result["target_weight"]
     return result
 

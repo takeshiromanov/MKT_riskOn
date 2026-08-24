@@ -26,6 +26,7 @@ from risk_indicator import (
     binary_signal,
     continuous_absolute_momentum,
     continuous_absolute_momentum_recovery,
+    continuous_absolute_momentum_recovery_one_shot,
     momentum_score,
 )
 
@@ -48,6 +49,10 @@ class BacktestConfig:
     recovery_step_cap: float = 0.20
     recovery_activation_ceiling: float = 0.50
     recovery_target_ceiling: float = 0.70
+    minimum_hold_months: int = 2
+    reset_confirm_months: int = 2
+    abort_excess_1m: float = -0.05
+    abort_raw_score_change: float = -0.15
 
 
 def load_prices(
@@ -123,7 +128,7 @@ def build_signal_frames(
         alpha_down=config.alpha_down,
         round_to=config.round_to,
     )
-    recovery = continuous_absolute_momentum_recovery(
+    recovery_v1 = continuous_absolute_momentum_recovery(
         prices,
         "EQUITY",
         "CASH",
@@ -140,7 +145,32 @@ def build_signal_frames(
         recovery_activation_ceiling=config.recovery_activation_ceiling,
         recovery_target_ceiling=config.recovery_target_ceiling,
     )
-    return {"Continuous L1": baseline, "Recovery L1": recovery}
+    one_shot = continuous_absolute_momentum_recovery_one_shot(
+        prices,
+        "EQUITY",
+        "CASH",
+        lookback_periods=config.lookback_periods,
+        lookback_weights=config.lookback_weights,
+        volatility_window_months=config.volatility_window_months,
+        transition_width=config.transition_width,
+        alpha_up=config.alpha_up,
+        alpha_down=config.alpha_down,
+        round_to=config.round_to,
+        probe_size=config.probe_size,
+        recovery_alpha_up=config.recovery_alpha_up,
+        recovery_step_cap=config.recovery_step_cap,
+        recovery_activation_ceiling=config.recovery_activation_ceiling,
+        recovery_target_ceiling=config.recovery_target_ceiling,
+        minimum_hold_months=config.minimum_hold_months,
+        reset_confirm_months=config.reset_confirm_months,
+        abort_excess_1m=config.abort_excess_1m,
+        abort_raw_score_change=config.abort_raw_score_change,
+    )
+    return {
+        "Continuous L1": baseline,
+        "Recovery v1": recovery_v1,
+        "Recovery one-shot": one_shot,
+    }
 
 
 def build_targets(
@@ -157,7 +187,8 @@ def build_targets(
             prices, "EQUITY", "CASH", config.lookback_periods
         ),
         "Continuous L1": signals["Continuous L1"]["target_weight"],
-        "Recovery L1": signals["Recovery L1"]["target_weight"],
+        "Recovery v1": signals["Recovery v1"]["target_weight"],
+        "Recovery one-shot": signals["Recovery one-shot"]["target_weight"],
     }
 
 
@@ -487,12 +518,12 @@ def recovery_robustness_grid(
     """Griglia limitata e predefinita: verifica stabilita, non cerca l'ottimo."""
     cash_returns = prices["CASH"].pct_change(fill_method=None)
     rows: list[dict[str, object]] = []
-    for probe_size, recovery_alpha_up, recovery_step_cap in product(
+    for probe_size, recovery_alpha_up, minimum_hold_months in product(
         (0.15, 0.20),
-        (0.50, 0.60, 0.70),
-        (0.15, 0.20),
+        (0.50, 0.60),
+        (1, 2, 3),
     ):
-        signal = continuous_absolute_momentum_recovery(
+        signal = continuous_absolute_momentum_recovery_one_shot(
             prices,
             "EQUITY",
             "CASH",
@@ -505,9 +536,13 @@ def recovery_robustness_grid(
             round_to=config.round_to,
             probe_size=probe_size,
             recovery_alpha_up=recovery_alpha_up,
-            recovery_step_cap=recovery_step_cap,
+            recovery_step_cap=config.recovery_step_cap,
             recovery_activation_ceiling=config.recovery_activation_ceiling,
             recovery_target_ceiling=config.recovery_target_ceiling,
+            minimum_hold_months=minimum_hold_months,
+            reset_confirm_months=config.reset_confirm_months,
+            abort_excess_1m=config.abort_excess_1m,
+            abort_raw_score_change=config.abort_raw_score_change,
         )
         result = backtest_allocation(
             prices,
@@ -521,7 +556,7 @@ def recovery_robustness_grid(
             {
                 "probe_size": probe_size,
                 "recovery_alpha_up": recovery_alpha_up,
-                "recovery_step_cap": recovery_step_cap,
+                "minimum_hold_months": minimum_hold_months,
                 **metrics,
             }
         )
@@ -558,14 +593,16 @@ def plot_diagnostics(
         "Binary 12m": "#6B7280",
         "Graduated 3/6/12": "#9CA3AF",
         "Continuous L1": "#2563EB",
-        "Recovery L1": "#D97706",
+        "Recovery v1": "#D97706",
+        "Recovery one-shot": "#059669",
     }
     styles = {
         "Buy & Hold": "--",
         "Binary 12m": ":",
         "Graduated 3/6/12": "-.",
         "Continuous L1": "-",
-        "Recovery L1": "-",
+        "Recovery v1": ":",
+        "Recovery one-shot": "-",
     }
     fig, (wealth_ax, weight_ax) = plt.subplots(
         2, 1, figsize=(12, 8), sharex=True, gridspec_kw={"height_ratios": [3, 1]}
@@ -578,7 +615,11 @@ def plot_diagnostics(
             label=name,
             color=colors[name],
             linestyle=styles[name],
-            linewidth=2.2 if name == "Recovery L1" else (1.8 if name == "Continuous L1" else 1.3),
+            linewidth=(
+                2.2
+                if name == "Recovery one-shot"
+                else (1.8 if name in {"Continuous L1", "Recovery v1"} else 1.3)
+            ),
         )
     fig.suptitle(
         "Layer 1 - confronto fuori campione mensile",
@@ -608,21 +649,33 @@ def plot_diagnostics(
         linewidth=1.8,
         label="Continuous L1",
     )
-    recovery_weight = results["Recovery L1"].loc[common_index, "target_weight"]
+    recovery_weight = results["Recovery v1"].loc[common_index, "target_weight"]
     weight_ax.step(
         recovery_weight.index,
         recovery_weight,
         where="mid",
         color="#D97706",
+        linewidth=1.3,
+        linestyle=":",
+        label="Recovery v1",
+    )
+    one_shot_weight = results["Recovery one-shot"].loc[
+        common_index, "target_weight"
+    ]
+    weight_ax.step(
+        one_shot_weight.index,
+        one_shot_weight,
+        where="mid",
+        color="#059669",
         linewidth=1.8,
-        label="Recovery L1",
+        label="Recovery one-shot",
     )
     weight_ax.axhline(0.50, color="#374151", linewidth=1, linestyle="--")
     weight_ax.set_ylim(-0.03, 1.03)
     weight_ax.set_ylabel("Esposizione")
     weight_ax.set_yticks([0, 0.5, 1], labels=["0%", "50%", "100%"])
     weight_ax.grid(axis="y", color="#E5E7EB", linewidth=0.7)
-    weight_ax.legend(frameon=False, ncol=2, loc="lower right")
+    weight_ax.legend(frameon=False, ncol=3, loc="lower right")
     fig.tight_layout(rect=(0, 0, 1, 0.92))
     fig.savefig(output_path, dpi=160, bbox_inches="tight", facecolor="white")
     plt.close(fig)
@@ -651,8 +704,8 @@ def plot_calibration(
         x + width / 2,
         recovery_values,
         width,
-        label="Recovery L1",
-        color="#D97706",
+        label="Recovery one-shot",
+        color="#059669",
         edgecolor="#1F2937",
         linewidth=0.7,
     )
@@ -705,7 +758,7 @@ def plot_rebound_comparison(stress: pd.DataFrame, output_path: Path) -> None:
     )
     benchmark = stress.groupby("trough_date")["benchmark_rebound_3m"].first()
     plot_data = pivot.join(benchmark.rename("Benchmark")).dropna(
-        subset=["Continuous L1", "Recovery L1", "Benchmark"]
+        subset=["Continuous L1", "Recovery one-shot", "Benchmark"]
     )
     x = np.arange(len(plot_data))
     width = 0.26
@@ -729,10 +782,10 @@ def plot_rebound_comparison(stress: pd.DataFrame, output_path: Path) -> None:
     )
     ax.bar(
         x + width,
-        plot_data["Recovery L1"],
+        plot_data["Recovery one-shot"],
         width,
-        label="Recovery L1",
-        color="#D97706",
+        label="Recovery one-shot",
+        color="#059669",
         edgecolor="#1F2937",
     )
     fig.suptitle(
@@ -761,19 +814,23 @@ def plot_rebound_comparison(stress: pd.DataFrame, output_path: Path) -> None:
     plt.close(fig)
 
 
-def recovery_gate_table(metrics: pd.DataFrame, stress: pd.DataFrame) -> pd.DataFrame:
+def recovery_gate_table(
+    metrics: pd.DataFrame,
+    stress: pd.DataFrame,
+    strategy_name: str = "Recovery one-shot",
+) -> pd.DataFrame:
     baseline = metrics.loc["Continuous L1"]
-    recovery = metrics.loc["Recovery L1"]
+    recovery = metrics.loc[strategy_name]
     pivot_rebound = stress.pivot(
         index="trough_date",
         columns="strategy",
         values="strategy_rebound_3m",
-    ).dropna(subset=["Continuous L1", "Recovery L1"])
+    ).dropna(subset=["Continuous L1", strategy_name])
     pivot_lag = stress.pivot(
         index="trough_date",
         columns="strategy",
         values="reentry_lag_from_trough_months",
-    ).dropna(subset=["Continuous L1", "Recovery L1"])
+    ).dropna(subset=["Continuous L1", strategy_name])
 
     drawdown_deterioration = float(
         baseline["max_drawdown"] - recovery["max_drawdown"]
@@ -782,33 +839,37 @@ def recovery_gate_table(metrics: pd.DataFrame, stress: pd.DataFrame) -> pd.DataF
         recovery["whipsaws_within_3m"] - baseline["whipsaws_within_3m"]
     )
     rebound_gain = float(
-        (pivot_rebound["Recovery L1"] - pivot_rebound["Continuous L1"]).mean()
+        (pivot_rebound[strategy_name] - pivot_rebound["Continuous L1"]).mean()
     )
     lag_change = float(
-        (pivot_lag["Recovery L1"] - pivot_lag["Continuous L1"]).median()
+        (pivot_lag[strategy_name] - pivot_lag["Continuous L1"]).median()
     )
     return pd.DataFrame(
         [
             {
                 "gate": "max_drawdown_deterioration",
+                "strategy": strategy_name,
                 "value": drawdown_deterioration,
                 "rule": "<= 0.02",
                 "passed": drawdown_deterioration <= 0.02,
             },
             {
                 "gate": "whipsaw_increase",
+                "strategy": strategy_name,
                 "value": whipsaw_increase,
                 "rule": "<= 2",
                 "passed": whipsaw_increase <= 2,
             },
             {
                 "gate": "mean_3m_rebound_gain",
+                "strategy": strategy_name,
                 "value": rebound_gain,
                 "rule": "> 0",
                 "passed": rebound_gain > 0,
             },
             {
                 "gate": "median_reentry_lag_change_months",
+                "strategy": strategy_name,
                 "value": lag_change,
                 "rule": "<= 0",
                 "passed": lag_change <= 0,
@@ -834,16 +895,17 @@ def write_summary(
     monotonic_pairs = nonempty_bins["mean_excess_6m"].diff().dropna()
     violations = int((monotonic_pairs < 0).sum())
     continuous = metrics.loc["Continuous L1"]
-    recovery = metrics.loc["Recovery L1"]
+    recovery_v1 = metrics.loc["Recovery v1"]
+    recovery = metrics.loc["Recovery one-shot"]
     binary = metrics.loc["Binary 12m"]
     gate_passed = bool(gates["passed"].all())
     stress_pivot = stress.pivot(
         index="trough_date",
         columns="strategy",
         values="strategy_rebound_3m",
-    ).dropna(subset=["Continuous L1", "Recovery L1"])
+    ).dropna(subset=["Continuous L1", "Recovery one-shot"])
     rebound_gain = (
-        stress_pivot["Recovery L1"] - stress_pivot["Continuous L1"]
+        stress_pivot["Recovery one-shot"] - stress_pivot["Continuous L1"]
     ).mean()
     lines = [
         "# Layer 1 - sintesi del backtest critico",
@@ -857,12 +919,12 @@ def write_summary(
         "## Test principali",
         "",
         f"- Max drawdown continuo: {continuous['max_drawdown']:.1%}; binario: {binary['max_drawdown']:.1%}.",
-        f"- Max drawdown Recovery: {recovery['max_drawdown']:.1%}.",
+        f"- Max drawdown Recovery v1: {recovery_v1['max_drawdown']:.1%}; one-shot: {recovery['max_drawdown']:.1%}.",
         f"- Esposizione media continua: {continuous['average_equity_weight']:.1%}.",
-        f"- Esposizione media Recovery: {recovery['average_equity_weight']:.1%}.",
+        f"- Esposizione media Recovery one-shot: {recovery['average_equity_weight']:.1%}.",
         f"- Whipsaw entro 3 mesi: continuo {int(continuous['whipsaws_within_3m'])}; binario {int(binary['whipsaws_within_3m'])}.",
-        f"- Whipsaw Recovery: {int(recovery['whipsaws_within_3m'])}.",
-        f"- Guadagno medio Recovery nei primi 3 mesi dai minimi: {rebound_gain:+.1%} rispetto al continuo.",
+        f"- Whipsaw Recovery v1: {int(recovery_v1['whipsaws_within_3m'])}; one-shot: {int(recovery['whipsaws_within_3m'])}.",
+        f"- Guadagno medio Recovery one-shot nei primi 3 mesi dai minimi: {rebound_gain:+.1%} rispetto al continuo.",
         f"- Violazioni della monotonicita tra bucket adiacenti: {violations} su {max(len(monotonic_pairs), 0)}.",
         f"- Robustness grid: {len(robustness)} configurazioni vicine, senza selezione dell'ottimo.",
         f"- Recovery grid: {len(recovery_robustness)} configurazioni predefinite.",
@@ -948,7 +1010,11 @@ def save_outputs(
         "price_currency": "USD",
         "frequency": "monthly",
         "signal_lag_months": 1,
-        "models": ["L1-continuous-v1", "L1-recovery-v1-experimental"],
+        "models": [
+            "L1-continuous-v1",
+            "L1-recovery-v1-experimental",
+            "L1-recovery-one-shot-v2-experimental",
+        ],
         "config": config.__dict__,
     }
     (output_dir / "manifest.json").write_text(
@@ -975,28 +1041,36 @@ def execute_backtest(
         }
     ).T
     baseline_calibration = calibration_table(prices, targets["Continuous L1"])
-    recovery_calibration = calibration_table(prices, targets["Recovery L1"])
+    recovery_calibration = calibration_table(
+        prices, targets["Recovery one-shot"]
+    )
     stress = pd.concat(
         [
             stress_table(prices, results["Continuous L1"], "Continuous L1"),
-            stress_table(prices, results["Recovery L1"], "Recovery L1"),
+            stress_table(prices, results["Recovery v1"], "Recovery v1"),
+            stress_table(
+                prices, results["Recovery one-shot"], "Recovery one-shot"
+            ),
         ],
         ignore_index=True,
     )
     robustness = robustness_grid(prices, config, common_index)
     recovery_robustness = recovery_robustness_grid(prices, config, common_index)
     gates = recovery_gate_table(metrics, stress)
-    recovery_signal = signals["Recovery L1"][
+    recovery_signal = signals["Recovery one-shot"][
         [
             "raw_score",
             "baseline_target_weight",
             "fast_excess_1m",
             "fast_excess_3m",
             "fast_excess_3m_change",
-            "recovery_mode",
+            "one_shot_armed",
+            "episode_used",
             "probe_active",
             "recovery_confirmed",
-            "effective_alpha",
+            "abort_active",
+            "hold_remaining",
+            "recovery_phase",
             "target_weight",
         ]
     ]

@@ -7,6 +7,7 @@ from risk_indicator import (
     backtest_allocation,
     continuous_absolute_momentum,
     continuous_absolute_momentum_recovery,
+    continuous_absolute_momentum_recovery_one_shot,
 )
 
 
@@ -138,6 +139,53 @@ class RiskIndicatorTests(unittest.TestCase):
             prices, "EQUITY", "CASH"
         )["target_weight"]
         second = continuous_absolute_momentum_recovery(
+            altered, "EQUITY", "CASH"
+        )["target_weight"]
+        pd.testing.assert_series_equal(
+            first.loc[:cutoff], second.loc[:cutoff], check_names=False
+        )
+
+    def test_one_shot_matches_core_before_its_first_trigger(self):
+        prices = _v_reversal_prices()
+        baseline = continuous_absolute_momentum(
+            prices, "EQUITY", "CASH"
+        )["target_weight"]
+        one_shot = continuous_absolute_momentum_recovery_one_shot(
+            prices, "EQUITY", "CASH"
+        )
+        trigger_dates = one_shot.index[one_shot["probe_active"]]
+        self.assertEqual(len(trigger_dates), 1)
+        before_trigger = one_shot.index < trigger_dates[0]
+        pd.testing.assert_series_equal(
+            baseline.loc[before_trigger],
+            one_shot.loc[before_trigger, "target_weight"],
+            check_names=False,
+        )
+
+    def test_one_shot_accelerates_rebound_without_rearming_same_episode(self):
+        prices = _v_reversal_prices()
+        baseline = continuous_absolute_momentum(
+            prices, "EQUITY", "CASH"
+        )["target_weight"]
+        one_shot = continuous_absolute_momentum_recovery_one_shot(
+            prices, "EQUITY", "CASH"
+        )
+        rebound = prices.index[58:64]
+        self.assertGreater(
+            one_shot.loc[rebound, "target_weight"].mean(),
+            baseline.loc[rebound].mean(),
+        )
+        self.assertEqual(int(one_shot["probe_active"].sum()), 1)
+
+    def test_one_shot_signal_has_no_future_data_dependency(self):
+        prices = _v_reversal_prices()
+        cutoff = prices.index[70]
+        altered = prices.copy()
+        altered.loc[altered.index > cutoff, "EQUITY"] *= 3
+        first = continuous_absolute_momentum_recovery_one_shot(
+            prices, "EQUITY", "CASH"
+        )["target_weight"]
+        second = continuous_absolute_momentum_recovery_one_shot(
             altered, "EQUITY", "CASH"
         )["target_weight"]
         pd.testing.assert_series_equal(
