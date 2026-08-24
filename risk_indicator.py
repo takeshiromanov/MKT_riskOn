@@ -15,6 +15,9 @@ import pandas as pd
 from dual_momentum import compute_momentum
 
 
+MODEL_VERSION = "L1-continuous-v1"
+
+
 def binary_signal(
     prices: pd.DataFrame,
     equity_asset: str,
