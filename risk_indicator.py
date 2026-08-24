@@ -164,16 +164,50 @@ def backtest_allocation(
     target_weight: pd.Series,
     transaction_cost_bps: float = 10.0,
 ) -> pd.DataFrame:
-    """Applica il target del mese T ai rendimenti del mese T+1."""
+    """Applica il target del mese T ai rendimenti del mese T+1.
+
+    Il turnover e calcolato rispetto al peso azionario effettivo dopo il
+    rendimento del mese precedente. In questo modo il costo include anche il
+    ribilanciamento necessario per riportare il portafoglio al target, non solo
+    le variazioni esplicite del target stesso. Il portafoglio parte in cash.
+    """
+    if transaction_cost_bps < 0:
+        raise ValueError("transaction_cost_bps non puo essere negativo")
+
     returns = prices[[equity_asset, cash_asset]].pct_change(fill_method=None)
     weight = target_weight.shift(1)
-    gross_return = (
-        weight * returns[equity_asset]
-        + (1 - weight) * returns[cash_asset]
-    )
-    turnover = weight.diff().abs().fillna(0)
-    cost = turnover * (transaction_cost_bps / 10_000)
-    net_return = gross_return - cost
+    turnover = pd.Series(np.nan, index=prices.index, dtype=float)
+    gross_return = pd.Series(np.nan, index=prices.index, dtype=float)
+    net_return = pd.Series(np.nan, index=prices.index, dtype=float)
+
+    pre_trade_equity_weight = 0.0
+    for date in prices.index:
+        desired_weight = weight.loc[date]
+        equity_return = returns.loc[date, equity_asset]
+        cash_return = returns.loc[date, cash_asset]
+        if pd.isna(desired_weight) or pd.isna(equity_return) or pd.isna(cash_return):
+            continue
+
+        desired_weight = float(desired_weight)
+        period_turnover = abs(desired_weight - pre_trade_equity_weight)
+        period_gross_return = (
+            desired_weight * float(equity_return)
+            + (1 - desired_weight) * float(cash_return)
+        )
+        period_cost = period_turnover * (transaction_cost_bps / 10_000)
+
+        turnover.loc[date] = period_turnover
+        gross_return.loc[date] = period_gross_return
+        net_return.loc[date] = period_gross_return - period_cost
+
+        gross_growth = 1 + period_gross_return
+        if gross_growth <= 0:
+            pre_trade_equity_weight = desired_weight
+        else:
+            pre_trade_equity_weight = (
+                desired_weight * (1 + float(equity_return)) / gross_growth
+            )
+
     equity_curve = (1 + net_return.fillna(0)).cumprod()
     return pd.DataFrame(
         {
