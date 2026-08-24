@@ -1,5 +1,7 @@
 # Layer 1 - Global Risk Indicator
 
+[![Critical Layer 1 backtest](https://github.com/takeshiromanov/MKT_riskOn/actions/workflows/critical-backtest.yml/badge.svg)](https://github.com/takeshiromanov/MKT_riskOn/actions/workflows/critical-backtest.yml)
+
 Applicazione Streamlit che stima quanta esposizione azionaria globale
 mantenere e quanta liquidita conservare.
 
