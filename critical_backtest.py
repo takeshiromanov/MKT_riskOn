@@ -33,9 +33,9 @@ from risk_indicator import (
 
 @dataclass(frozen=True)
 class BacktestConfig:
-    equity: str = "URTH"
+    equity: str = "ACWI"
     cash: str = "BIL"
-    start: str = "2012-01-01"
+    start: str = "2008-01-01"
     transaction_cost_bps: float = 10.0
     lookback_periods: tuple[int, ...] = (3, 6, 12)
     lookback_weights: tuple[float, ...] = (0.20, 0.30, 0.50)
@@ -750,7 +750,11 @@ def plot_calibration(
     plt.close(fig)
 
 
-def plot_rebound_comparison(stress: pd.DataFrame, output_path: Path) -> None:
+def plot_rebound_comparison(
+    stress: pd.DataFrame,
+    output_path: Path,
+    benchmark_label: str,
+) -> None:
     pivot = stress.pivot(
         index="trough_date",
         columns="strategy",
@@ -767,7 +771,7 @@ def plot_rebound_comparison(stress: pd.DataFrame, output_path: Path) -> None:
         x - width,
         plot_data["Benchmark"],
         width,
-        label="URTH",
+        label=benchmark_label,
         color="#D1D5DB",
         edgecolor="#374151",
     )
@@ -798,7 +802,8 @@ def plot_rebound_comparison(stress: pd.DataFrame, output_path: Path) -> None:
     fig.text(
         0.10,
         0.925,
-        "Rendimento netto nei maggiori drawdown URTH; segnale mensile applicato a T+1",
+        f"Rendimento netto nei maggiori drawdown {benchmark_label}; "
+        "segnale mensile applicato a T+1",
         fontsize=9,
         color="#4B5563",
     )
@@ -937,7 +942,12 @@ def write_summary(
         "",
         "## Limite strutturale",
         "",
-        "URTH/BIL offrono una finestra comune relativamente breve e non includono la bolla dot-com o la crisi 2008. Prima di congelare il Layer 1 occorre ripetere lo stesso test con una serie total-return storica del MSCI World e Treasury Bill USD, caricandola tramite --prices-csv.",
+        f"{config.equity}/{config.cash} offrono una finestra comune relativamente "
+        "breve e non includono la bolla dot-com. Poiche ACWI nasce durante il 2008 "
+        "e il segnale richiede almeno 12 mesi di warm-up, non consente neppure di "
+        "valutare causalmente l'uscita prima della crisi finanziaria. Prima di "
+        "congelare il Layer 1 occorre ripetere lo stesso test con serie total-return "
+        "storiche del MSCI ACWI e Treasury Bill USD, caricate tramite --prices-csv.",
         "",
         "![Diagnostica](backtest_diagnostics.png)",
         "",
@@ -989,7 +999,11 @@ def save_outputs(
         recovery_calibration,
         output_dir / "calibration.png",
     )
-    plot_rebound_comparison(stress, output_dir / "recovery_stress.png")
+    plot_rebound_comparison(
+        stress,
+        output_dir / "recovery_stress.png",
+        benchmark_label=config.equity,
+    )
     write_summary(
         output_dir / "critical_backtest_summary.md",
         source,
@@ -1095,9 +1109,9 @@ def execute_backtest(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--equity", default="URTH")
+    parser.add_argument("--equity", default="ACWI")
     parser.add_argument("--cash", default="BIL")
-    parser.add_argument("--start", default="2012-01-01")
+    parser.add_argument("--start", default="2008-01-01")
     parser.add_argument("--prices-csv", type=Path)
     parser.add_argument("--output", type=Path, default=Path("reports/latest"))
     parser.add_argument("--transaction-cost-bps", type=float, default=10.0)
