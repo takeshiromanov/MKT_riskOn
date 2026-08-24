@@ -10,6 +10,7 @@ from critical_backtest import (
     calibration_table,
     drawdown_episodes,
     execute_backtest,
+    load_prices,
 )
 
 
@@ -30,6 +31,23 @@ def _synthetic_prices(months: int = 144) -> pd.DataFrame:
 
 
 class CriticalBacktestTests(unittest.TestCase):
+    def test_loader_excludes_incomplete_calendar_month(self):
+        today_utc = pd.Timestamp.now(tz="UTC").tz_localize(None).normalize()
+        current_month_end = today_utc.to_period("M").end_time.normalize()
+        index = pd.date_range(end=current_month_end, periods=48, freq="ME")
+        frame = pd.DataFrame(
+            {
+                "DATE": index,
+                "EQUITY": np.linspace(100, 160, len(index)),
+                "CASH": np.linspace(100, 105, len(index)),
+            }
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            csv_path = Path(temporary) / "prices.csv"
+            frame.to_csv(csv_path, index=False)
+            prices, _ = load_prices("URTH", "BIL", "2012-01-01", csv_path)
+        self.assertLess(prices.index[-1], today_utc.to_period("M").start_time)
+
     def test_drawdown_episode_dates(self):
         index = pd.date_range("2020-01-31", periods=6, freq="ME")
         prices = pd.Series([100, 110, 90, 95, 111, 115], index=index)
